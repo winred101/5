@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>迷雾森林传说</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#4A6FA5',
+                        secondary: '#C8A27A',
+                        dark: '#2C3E50',
+                        light: '#F8F5F0',
+                    },
+                    fontFamily: {
+                        serif: ['Garamond', 'Georgia', 'serif'],
+                    }
+                }
+            }
+        }
+    </script>
+    <style type="text/tailwindcss">
+        @layer utilities {
+            .text-shadow {
+                text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+            }
+            .bg-texture {
+                background-image: url('https://picsum.photos/id/106/1000/1000');
+                background-size: cover;
+                background-position: center;
+                background-attachment: fixed;
+            }
+            .option-hover {
+                transition: all 0.3s ease;
+            }
+            .option-hover:hover {
+                transform: translateX(8px);
+                background-color: rgba(74, 111, 165, 0.15);
+            }
+        }
+    </style>
+</head>
+<body class="bg-light min-h-screen font-serif text-dark">
+    <!-- 背景遮罩 -->
+    <div class="fixed inset-0 bg-texture opacity-20 z-0"></div>
+    
+    <div class="container mx-auto px-4 py-8 max-w-3xl relative z-10">
+        <!-- 游戏标题 -->
+        <header class="text-center mb-8 pb-4 border-b-2 border-secondary">
+            <h1 class="text-[clamp(2rem,5vw,3rem)] font-bold text-primary text-shadow">武侠世界</h1>
+            <p class="text-gray-600 italic">一个充满未知的旅程...</p>
+        </header>
+        
+        <!-- 游戏区域 -->
+        <main class="bg-white/80 backdrop-blur-sm rounded-lg p-6 md:p-8 shadow-xl mb-8">
+            <!-- 故事显示区域 -->
+            <div id="story-container" class="mb-8 leading-relaxed text-lg">
+                <p>你在一片陌生的森林中醒来，阳光透过树叶的缝隙洒在地上。周围寂静无声，只有远处偶尔传来鸟鸣。你站起身，拍了拍身上的泥土，不知道自己是怎么来到这里的。</p>
+                <p class="mt-4">在你面前有两条路：左边的路通往一片阴暗的密林，右边的路沿着一条小溪延伸。</p>
+            </div>
+            
+            <!-- 选择区域 -->
+            <div id="choices-container" class="space-y-4">
+                <div class="option-hover p-4 border-l-4 border-primary rounded-r-lg cursor-pointer" data-next="dark-forest">
+                    <p><i class="fa-solid fa-tree mr-2 text-secondary"></i>走进阴暗的密林</p>
+                </div>
+                <div class="option-hover p-4 border-l-4 border-primary rounded-r-lg cursor-pointer" data-next="stream">
+                    <p><i class="fa-solid fa-water mr-2 text-secondary"></i>沿着小溪前进</p>
+                </div>
+            </div>
+            
+            <!-- 状态栏 -->
+            <div class="mt-8 pt-4 border-t border-gray-200 flex justify-between items-center">
+                <div>
+                    <span class="text-sm text-gray-500"><i class="fa-solid fa-compass mr-1"></i> 进度: <span id="progress">1/未知</span></span>
+                </div>
+                <button id="restart-btn" class="text-sm text-primary hover:text-primary/80 flex items-center">
+                    <i class="fa-solid fa-refresh mr-1"></i> 重新开始
+                </button>
+            </div>
+        </main>
+        
+        <!-- 游戏信息 -->
+        <footer class="text-center text-gray-500 text-sm">
+            <p>点击选项来推进故事 | 你的每一个选择都会影响结局</p>
+        </footer>
+    </div>
+
+    <script>
+        // AI接口配置
+        const AI_API_URL = 'https://free.v36.cm/v1/chat/completions';
+        const AI_API_KEY = 'sk-tdDxTV2apYLD07R070A3845eAb7c4996A8CeD4B019288b2f';
+        const AI_MODEL = 'gpt-4o-mini';
+
+        // 存档键
+        const SAVE_KEY = 'mist_forest_ai_save';
+
+        // DOM元素
+        const storyContainer = document.getElementById('story-container');
+        const choicesContainer = document.getElementById('choices-container');
+        const progressIndicator = document.getElementById('progress');
+        const restartBtn = document.getElementById('restart-btn');
+
+        // 新增存档/读档按钮
+        const saveBtn = document.createElement('button');
+        saveBtn.textContent = '存档';
+        saveBtn.className = 'text-sm text-primary hover:text-primary/80 flex items-center ml-4';
+        const loadBtn = document.createElement('button');
+        loadBtn.textContent = '读档';
+        loadBtn.className = 'text-sm text-primary hover:text-primary/80 flex items-center ml-2';
+        restartBtn.parentNode.appendChild(saveBtn);
+        restartBtn.parentNode.appendChild(loadBtn);
+
+        // 游戏状态
+        let history = [];
+        let currentStory = '';
+        let currentChoices = [];
+        let progressCount = 1;
+
+        // AI请求：生成剧情和10个选项
+        async function fetchAIStory(history) {
+            const systemPrompt = `你是一个武侠文字冒险游戏AI。世界观参考金庸武侠小说，开局玩家在无名村中醒来，每次用户选择后，你会生成一段新的剧情，并给出10个可选项。请用如下JSON格式返回：{\"story\":\"剧情内容\",\"choices\":[\"选项1\",...]}。剧情要有悬念和探索感，选项要多样且有趣。不要输出除JSON外的任何内容。`;
+            const userPrompt = history.map((h, i) => `第${i+1}步：${h.story}\n选择：${h.choice}`).join('\n') || '玩家刚刚进入游戏。';
+            const messages = [
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: userPrompt }
+            ];
+            const res = await fetch(AI_API_URL, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${AI_API_KEY}`
+                },
+                body: JSON.stringify({ model: AI_MODEL, messages })
+            });
+            if (!res.ok) throw new Error('AI接口请求失败');
+            const data = await res.json();
+            // 解析AI返回的JSON
+            let content = data.choices?.[0]?.message?.content || '';
+            try {
+                // 只提取JSON部分
+                const jsonStr = content.match(/\{[\s\S]*\}/)?.[0];
+                return JSON.parse(jsonStr);
+            } catch {
+                throw new Error('AI返回内容解析失败');
+            }
+        }
+
+        // 渲染剧情和选项
+        function renderStory(story, choices) {
+            storyContainer.innerHTML = '';
+            story.split(/\n|<br\s*\/>/).forEach((paragraph, idx) => {
+                if (paragraph.trim()) {
+                    const p = document.createElement('p');
+                    p.innerHTML = paragraph;
+                    if (idx > 0) p.classList.add('mt-4');
+                    storyContainer.appendChild(p);
+                }
+            });
+            choicesContainer.innerHTML = '';
+            choices.forEach((choice, idx) => {
+                const div = document.createElement('div');
+                div.className = 'option-hover p-4 border-l-4 border-primary rounded-r-lg cursor-pointer';
+                div.innerHTML = `<p>${choice}</p>`;
+                div.dataset.idx = idx;
+                div.addEventListener('click', () => onChoice(idx));
+                choicesContainer.appendChild(div);
+            });
+        }
+
+        // 处理玩家选择
+        async function onChoice(idx) {
+            const choiceText = currentChoices[idx];
+            history.push({ story: currentStory, choice: choiceText });
+            progressCount++;
+            updateProgress();
+            renderLoading();
+            try {
+                const ai = await fetchAIStory(history);
+                currentStory = ai.story;
+                currentChoices = ai.choices;
+                renderStory(currentStory, currentChoices);
+            } catch (e) {
+                storyContainer.innerHTML = `<p class='text-red-500'>剧情生成失败：${e.message}</p>`;
+                choicesContainer.innerHTML = '';
+            }
+        }
+
+        // 初始剧情
+        async function startGame() {
+            history = [];
+            progressCount = 1;
+            updateProgress();
+            renderLoading();
+            try {
+                const ai = await fetchAIStory(history);
+                currentStory = ai.story;
+                currentChoices = ai.choices;
+                renderStory(currentStory, currentChoices);
+            } catch (e) {
+                storyContainer.innerHTML = `<p class='text-red-500'>剧情生成失败：${e.message}</p>`;
+                choicesContainer.innerHTML = '';
+            }
+        }
+
+        // 存档
+        function saveGame() {
+            const saveData = {
+                history,
+                currentStory,
+                currentChoices,
+                progressCount
+            };
+            localStorage.setItem(SAVE_KEY, JSON.stringify(saveData));
+            alert('存档成功！');
+        }
+        // 读档
+        function loadGame() {
+            const saveData = localStorage.getItem(SAVE_KEY);
+            if (!saveData) return alert('没有存档！');
+            try {
+                const data = JSON.parse(saveData);
+                history = data.history || [];
+                currentStory = data.currentStory || '';
+                currentChoices = data.currentChoices || [];
+                progressCount = data.progressCount || 1;
+                updateProgress();
+                renderStory(currentStory, currentChoices);
+            } catch {
+                alert('存档损坏！');
+            }
+        }
+
+        // 进度显示
+        function updateProgress() {
+            progressIndicator.textContent = `${progressCount}/?`;
+        }
+
+        // 加载动画
+        function renderLoading() {
+            storyContainer.innerHTML = '<p class="text-gray-500">AI正在生成剧情，请稍候...</p>';
+            choicesContainer.innerHTML = '';
+        }
+
+        // 事件绑定
+        restartBtn.addEventListener('click', startGame);
+        saveBtn.addEventListener('click', saveGame);
+        loadBtn.addEventListener('click', loadGame);
+
+        // 启动游戏
+        startGame();
+    </script>
+</body>
+</html>
